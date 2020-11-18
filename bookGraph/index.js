@@ -6,6 +6,7 @@ const Author = require("./models/author");
 const User = require("./models/user");
 const jwt = require("jsonwebtoken");
 const { findOne } = require("./models/book");
+const user = require("./models/user");
 
 const JWT_SECRET = "somethingsekret";
 mongoose.set("useFindAndModify", false);
@@ -124,11 +125,12 @@ const typeDefs = gql`
     username: String!
     favoriteGenre: String!
     id: ID!
+    genre: String
   }
 
   type Book {
     title: String!
-    author: String!
+    author: Author!
     published: Int!
     genres: [String!]!
     id: ID!
@@ -137,7 +139,7 @@ const typeDefs = gql`
   type Author {
     name: String!
     born: Int
-    bookCount: Int!
+    bookCount: Int
   }
 
   type Mutation {
@@ -150,6 +152,7 @@ const typeDefs = gql`
       genres: [String!]!
     ): Book
     editAuthor(name: String!, born: Int!): Author
+    editUserGenre(genre: String!): User
   }
 `;
 
@@ -159,32 +162,42 @@ const resolvers = {
     authorCount: () => Author.collection.countDocuments(),
     allBooks: async (root, args) => {
       if (!args.author && !args.genre) {
-        return Book.find({});
+        return Book.find({}).populate("author");
       }
 
-      const booksRe = await Book.find({});
+      const booksRe = await Book.find({}).populate("author");
       let booksToReturn = args.author
         ? booksRe.filter((book) => book.author.name === args.author)
         : booksRe;
 
-      booksToReturn = args.genre
-        ? booksToReturn.filter((book) => book.genres.includes(args.genre))
-        : booksToReturn;
+      booksToReturn =
+        args.genre === "all"
+          ? booksToReturn
+          : booksToReturn.filter((book) => book.genres.includes(args.genre));
 
       return booksToReturn;
     },
     allAuthor: (root) => {
       return Author.find({});
     },
+    me: (root, args, { currentUser }) => {
+      return user.findOne({ username: currentUser.username });
+    },
   },
   Author: {
     bookCount: async (root) => {
-      const booksRe = await Book.find({});
+      const booksRe = await Book.find({}).populate("author");
       return booksRe.filter((book) => book.author.name === root.name).length;
     },
   },
   Mutation: {
     createUser: async (root, { username, favoriteGenre }) => {
+      if (!username) {
+        throw new UserInputError("no username present");
+      }
+      if (username < 3) {
+        throw new UserInputError("username is too short");
+      }
       const user = new User({ username, favoriteGenre });
 
       return user.save().catch((error) => {
@@ -211,10 +224,19 @@ const resolvers = {
       if (!currentUser) {
         throw new UserInputError("unauthenticated");
       }
+
+      if (args.author.length < 3) {
+        throw new UserInputError("Author name is too short!");
+      }
+
+      if (args.title.length < 2) {
+        throw new UserInputError("Book title is too short!");
+      }
+
       const authorExistCheck = await Author.findOne({ name: args.author });
       let author;
       if (authorExistCheck) {
-        console.log(authorExistCheck);
+        author = await Author.findOne({ name: args.author });
       } else {
         author = new Author({ name: args.author, born: null });
         try {
@@ -225,9 +247,9 @@ const resolvers = {
           });
         }
       }
-      const book = await new Book({
+      const book = new Book({
         ...args,
-        author: (await Author.findOne({ name: args.author }))._id,
+        author: author._id,
       });
 
       try {
@@ -238,27 +260,48 @@ const resolvers = {
         });
       }
 
-      return book;
+      return Book.findOne({ title: args.title }).populate("author");
     },
-    editAuthor: async (root, ags, { currentUser }) => {
+    editUserGenre: async (root, args, { currentUser }) => {
       if (!currentUser) {
         throw new UserInputError("unauthenticated");
       }
-      const author = await Author.findOne({ name: ags.name });
+      const user = await User.findOne({ username: currentUser.username });
+      if (!user) {
+        return null;
+      }
+
+      try {
+        await User.findOneAndUpdate(
+          { username: currentUser.username },
+          { genre: args.genre }
+        );
+      } catch (error) {
+        throw new UserInputError(error.message, {
+          invalidaArgs: args,
+        });
+      }
+
+      return { ...args };
+    },
+    editAuthor: async (root, args, { currentUser }) => {
+      if (!currentUser) {
+        throw new UserInputError("unauthenticated");
+      }
+      const author = await Author.findOne({ name: args.name });
       if (!author) {
         return null;
       }
 
-      author.born = ags.born;
       try {
-        await author.save();
+        await Author.findOneAndUpdate({ name: args.name }, { born: args.born });
       } catch (error) {
         throw new UserInputError(error.message, {
-          invalidaArgs: ags,
+          invalidaArgs: args,
         });
       }
 
-      return author;
+      return { ...args };
     },
   },
 };
