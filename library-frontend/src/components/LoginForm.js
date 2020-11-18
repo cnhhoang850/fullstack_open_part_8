@@ -9,7 +9,7 @@ const LoginForm = ({ setError, setToken }) => {
 
   const [login, result] = useMutation(LOGIN, {
     onError: (error) => {
-      setError(error.graphQLErrors);
+      setError(error.graphQLErrors[0].message);
     },
   });
 
@@ -18,7 +18,6 @@ const LoginForm = ({ setError, setToken }) => {
       console.log("-->", result.data);
       const token = result.data.login.value;
       setToken(token);
-      console.log(token);
       localStorage.setItem("library-user-token", token);
     }
   }, [result.data]); // eslint-disable-line
@@ -33,6 +32,7 @@ const LoginForm = ({ setError, setToken }) => {
 
   return (
     <div>
+      <h2>Login</h2>
       <form onSubmit={submit}>
         <div>
           username{" "}
