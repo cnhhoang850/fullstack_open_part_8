@@ -1,4 +1,4 @@
-const { ApolloServer, gql, UserInputError } = require("apollo-server");
+const { ApolloServer, gql, UserInputError, PubSub } = require("apollo-server");
 const { v1: uuid } = require("uuid");
 const mongoose = require("mongoose");
 const Book = require("./models/book");
@@ -7,6 +7,7 @@ const User = require("./models/user");
 const jwt = require("jsonwebtoken");
 const { findOne } = require("./models/book");
 const user = require("./models/user");
+const pubsub = new PubSub();
 
 const JWT_SECRET = "somethingsekret";
 mongoose.set("useFindAndModify", false);
@@ -154,9 +155,18 @@ const typeDefs = gql`
     editAuthor(name: String!, born: Int!): Author
     editUserGenre(genre: String!): User
   }
+
+  type Subscription {
+    bookAdded: Book!
+  }
 `;
 
 const resolvers = {
+  Subscription: {
+    bookAdded: {
+      subscribe: () => pubsub.asyncIterator(["BOOK_ADDED"]),
+    },
+  },
   Query: {
     bookCount: () => Book.collection.countDocuments(),
     authorCount: () => Author.collection.countDocuments(),
@@ -178,6 +188,7 @@ const resolvers = {
       return booksToReturn;
     },
     allAuthor: (root) => {
+      console.log("query");
       return Author.find({});
     },
     me: (root, args, { currentUser }) => {
@@ -238,7 +249,7 @@ const resolvers = {
       if (authorExistCheck) {
         author = await Author.findOne({ name: args.author });
       } else {
-        author = new Author({ name: args.author, born: null });
+        author = new Author({ name: args.author, born: null, bookCount: 1 });
         try {
           await author.save();
         } catch (error) {
@@ -259,6 +270,8 @@ const resolvers = {
           invalidaArgs: args,
         });
       }
+
+      pubsub.publish("BOOK_ADDED", { bookAdded: book });
 
       return Book.findOne({ title: args.title }).populate("author");
     },
@@ -319,6 +332,7 @@ const server = new ApolloServer({
   },
 });
 
-server.listen().then(({ url }) => {
+server.listen().then(({ url, subscriptionsUrl }) => {
   console.log(`Server ready at ${url}`);
+  console.log(`Subscription ready at ${subscriptionsUrl}`);
 });
